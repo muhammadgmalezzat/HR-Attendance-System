@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>نظام إدارة الحضور والانصراف</title>
+    <link rel="stylesheet" href="./CSS/styles.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>📊 نظام إدارة الحضور والانصراف</h1>
+        <p>نظام متكامل لتتبع وتحليل حضور الموظفين</p>
+      </div>
+
+      <div class="main-content">
+        <div class="sidebar">
+          <div class="card">
+            <div class="card-title">📁 رفع الملفات</div>
+
+            <div
+              class="file-upload"
+              onclick="document.getElementById('excelUsersFile').click()"
+            >
+              <p>📊 ملف الموظفين (Excel)</p>
+              <input
+                type="file"
+                id="excelUsersFile"
+                accept=".xlsx,.xls"
+                style="display: none"
+              />
+            </div>
+            <div id="usersInfo" class="file-info" style="display: none"></div>
+
+            <div
+              class="file-upload"
+              onclick="document.getElementById('attendanceFile').click()"
+            >
+              <p>⏰ ملف الحضور (CSV/TXT)</p>
+              <input
+                type="file"
+                id="attendanceFile"
+                accept=".csv,.txt"
+                style="display: none"
+              />
+            </div>
+            <div
+              id="attendanceInfo"
+              class="file-info"
+              style="display: none"
+            ></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">⚙️ إعدادات التقرير</div>
+            <div class="form-group">
+              <label for="shiftStart">بداية الدوام</label>
+              <input type="time" id="shiftStart" value="08:00" />
+            </div>
+            <div class="form-group">
+              <label for="workHours">ساعات العمل المتوقعة</label>
+              <input type="number" id="workHours" min="1" value="8" />
+            </div>
+            <div class="form-group">
+              <label for="statusFilter">فلترة حسب الحالة</label>
+              <select id="statusFilter">
+                <option value="all">جميع الحالات</option>
+                <option value="present">حاضر</option>
+                <option value="absent">غائب</option>
+                <option value="late">متأخر</option>
+              </select>
+            </div>
+            <button onclick="applyFilters()">تطبيق الفلترة</button>
+          </div>
+
+          <div class="card">
+            <div class="card-title">🔍 البحث</div>
+            <div class="search-box">
+              <input
+                type="text"
+                id="searchInput"
+                placeholder="ابحث بالاسم أو الرقم..."
+              />
+              <span class="search-icon">🔍</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">📈 إحصائيات سريعة</div>
+            <div class="stats">
+              <div class="stat-card">
+                <div class="stat-title">إجمالي الموظفين</div>
+                <div class="stat-value" id="totalEmployees">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-title">معدل الحضور</div>
+                <div class="stat-value" id="avgAttendance">0%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="actions">
+            <button onclick="generateReport()" class="success">
+              🔄 توليد التقرير
+            </button>
+            <button
+              onclick="downloadExcel()"
+              id="downloadExcel"
+              class="secondary"
+              disabled
+            >
+              📥 تحميل Excel شامل
+            </button>
+            <button
+              onclick="downloadEmployeeExcel()"
+              id="downloadEmployeeExcel"
+              class="secondary"
+              disabled
+            >
+              👤 Excel لكل موظف
+            </button>
+            <button
+              onclick="downloadIndividualExcels()"
+              id="downloadIndividual"
+              class="secondary"
+              disabled
+            >
+              📂 ملفات منفصلة لكل موظف
+            </button>
+            <button onclick="resetData()" class="danger">🔄 إعادة تعيين</button>
+          </div>
+
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>رقم الموظف</th>
+                  <th>اسم الموظف</th>
+                  <th>التاريخ</th>
+                  <th>أول حضور</th>
+                  <th>آخر انصراف</th>
+                  <th>ساعات العمل</th>
+                  <th>دقائق التأخير</th>
+                  <th>الحالة</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody">
+                <tr>
+                  <td
+                    colspan="8"
+                    style="text-align: center; padding: 40px; color: #999"
+                  >
+                    قم برفع ملفات الموظفين والحضور أولاً
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pagination" id="pagination"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./JS/main.js"></script>
+  </body>
+</html>
