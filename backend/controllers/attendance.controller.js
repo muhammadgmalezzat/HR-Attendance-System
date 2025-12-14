@@ -6,6 +6,7 @@ import {
   processAttendanceLogs,
   reprocessDateRange,
 } from "../services/attendanceProcessor.js";
+import User from "../models/User.model.js";
 
 // @desc    Upload attendance logs
 // @route   POST /api/attendance/upload
@@ -45,17 +46,31 @@ export const uploadAttendance = async (req, res) => {
     }
 
     // Add upload batch ID to records
-    const recordsWithBatch = records.map((r) => ({
-      ...r,
-      uploadBatchId: uploadHistory._id,
-      processed: false,
-    }));
+    const recordsWithBatch = records.map((r) => {
+      // تأكد إن checkIns موجودة كـ array
+      if (!Array.isArray(r.checkIns)) {
+        r.checkIns = [];
+      }
+
+      // تحويل كل عنصر في checkIns
+      r.checkIns = r.checkIns.map((ci) => ({
+        timestamp: new Date(ci.timestamp),
+        type: ci.type || "unknown",
+      }));
+
+      return {
+        ...r,
+        uploadBatchId: uploadHistory._id,
+        processed: false,
+      };
+    });
 
     // Insert raw attendance logs
     const insertedLogs = await RawAttendance.insertMany(recordsWithBatch);
 
     // Process logs immediately
     const processResult = await processAttendanceLogs(uploadHistory._id);
+    //console.log("🚀 ~ uploadAttendance ~ processResult:", processResult);
 
     // Update upload history
     uploadHistory.status = "completed";
@@ -104,6 +119,7 @@ export const getDailyRecords = async (req, res) => {
       endDate,
       userId,
       status,
+      month,
       sortBy = "date",
       sortOrder = "desc",
     } = req.query;
@@ -115,6 +131,19 @@ export const getDailyRecords = async (req, res) => {
       query.date = {};
       if (startDate) query.date.$gte = startDate;
       if (endDate) query.date.$lte = endDate;
+    }
+    if (month) {
+      // month format: "2025-11"
+      const [year, monthNum] = month.split("-");
+      const startOfMonth = `${year}-${monthNum}-01`;
+      const endOfMonth = moment(startOfMonth)
+        .endOf("month")
+        .format("YYYY-MM-DD");
+
+      query.date = {
+        $gte: startOfMonth,
+        $lte: endOfMonth,
+      };
     }
 
     if (userId) {
@@ -134,7 +163,6 @@ export const getDailyRecords = async (req, res) => {
 
     const [records, total] = await Promise.all([
       DailyRecord.find(query)
-        .populate("user", "name job gender")
         .sort(sort)
         .skip(skip)
         .limit(Number(limit)),
@@ -259,6 +287,33 @@ export const getSummaryStats = async (req, res) => {
   }
 };
 
+// @desc    Get available months
+// @route   GET /api/attendance/months
+// @access  Private
+export const getAvailableMonths = async (req, res) => {
+  try {
+    // جلب جميع التواريخ الفريدة
+    const dates = await DailyRecord.distinct('date');
+    
+    // استخراج الأشهر الفريدة
+    const months = [...new Set(
+      dates.map(date => date.substring(0, 7)) // "2025-11"
+    )].sort().reverse(); // ترتيب عكسي (الأحدث أولاً)
+
+    res.json({
+      success: true,
+      data: { months }
+    });
+  } catch (error) {
+    console.error("Get available months error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching available months",
+      error: error.message,
+    });
+  }
+};
+
 // @desc    Get employee attendance report
 // @route   GET /api/attendance/employee/:userId
 // @access  Private
@@ -275,9 +330,7 @@ export const getEmployeeReport = async (req, res) => {
       if (endDate) query.date.$lte = endDate;
     }
 
-    const records = await DailyRecord.find(query)
-      .sort({ date: 1 })
-      .populate("user", "name job gender");
+    const records = await DailyRecord.find(query).sort({ date: 1 });
 
     // Calculate employee stats
     const stats = {
@@ -302,11 +355,49 @@ export const getEmployeeReport = async (req, res) => {
         ? ((workDays / totalWorkableDays) * 100).toFixed(2)
         : 0;
 
+    // format data for frontend table
+    // للتاريخ: سنة فقط
+    function formatDateDMY(isoString) {
+      if (!isoString) return "-";
+      const date = new Date(isoString);
+      const day = String(date.getDate()).padStart(2, "0");
+      const month = String(date.getMonth() + 1).padStart(2, "0"); // الأشهر تبدأ من 0
+      const year = date.getFullYear();
+      return `${day}-${month}-${year}`;
+    }
+
+    // للوقت: ساعة:دقيقة فقط
+    function formatTime(isoString) {
+      if (!isoString) return "-";
+      const date = new Date(isoString);
+      return `${String(date.getHours()).padStart(2, "0")}:${String(
+        date.getMinutes()
+      ).padStart(2, "0")}`;
+    }
+
+    // تعديل عند تجهيز tableData
+    const tableData = records.map((r) => ({
+      id: r.user_id,
+      name: r.name || "-",
+      date: formatDateDMY(r.date), // سنة فقط
+      firstRecord: formatTime(r.firstCheckIn), // ساعة:دقيقة
+      lastRecord: formatTime(r.lastCheckOut), // ساعة:دقيقة
+      workHours: r.totalHours?.toFixed(2) || "-",
+      lateMinutes: r.lateMinutes || "-",
+      status: r.status?.toLowerCase() || "-",
+    }));
+
+    // res.json({
+    //   success: true,
+    //   data: tableData,
+    // });
+
     res.json({
       success: true,
       data: {
         records,
         stats,
+        tableData,
       },
     });
   } catch (error) {
