@@ -95,7 +95,7 @@ export const groupLogsByUserAndDate = (logs) => {
 /**
  * Process a single daily record
  */
-export const processDailyRecord = async (user_id, date, logs) => {
+const processDailyRecord = async (user_id, date, logs) => {
   // Get user configuration
   const user = await User.findOne({ user_id });
 
@@ -116,7 +116,7 @@ export const processDailyRecord = async (user_id, date, logs) => {
       { user_id, date },
       {
         user_id,
-        name: user?.name || "-",
+        name: user.name, // ✅ حفظ الاسم
         date,
         status: "DayOff",
         appliedShift: null,
@@ -149,7 +149,7 @@ export const processDailyRecord = async (user_id, date, logs) => {
       { user_id, date },
       {
         user_id,
-        name: user.name,
+        name: user.name, // ✅ حفظ الاسم
         date,
         status: "Absent",
         appliedShift: {
@@ -179,7 +179,6 @@ export const processDailyRecord = async (user_id, date, logs) => {
   const timeDiff = (lastCheckOut - firstCheckIn) / (1000 * 60); // minutes
 
   if (validLogs.length === 1 || timeDiff < 30) {
-    // Only one log or very short time - apply auto checkout
     lastCheckOut = new Date(
       firstCheckIn.getTime() + config.defaultAutoCheckout * 60000
     );
@@ -217,8 +216,8 @@ export const processDailyRecord = async (user_id, date, logs) => {
     { user_id, date },
     {
       user_id,
+      name: user.name, // ✅ حفظ الاسم
       date,
-      name: user.name,
       firstCheckIn,
       lastCheckOut,
       totalHours: Number(totalHours.toFixed(2)),
@@ -238,7 +237,6 @@ export const processDailyRecord = async (user_id, date, logs) => {
 
   return { isNew: !record, record };
 };
-
 /**
  * Calculate shift window (when to look for attendance)
  */

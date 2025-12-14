@@ -135,15 +135,36 @@ export const getDailyRecords = async (req, res) => {
     if (month) {
       // month format: "2025-11"
       const [year, monthNum] = month.split("-");
+
+      if (!year || !monthNum) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid month format. Expected: YYYY-MM",
+        });
+      }
+
+      // حساب أول وآخر يوم في الشهر
       const startOfMonth = `${year}-${monthNum}-01`;
-      const endOfMonth = moment(startOfMonth)
-        .endOf("month")
-        .format("YYYY-MM-DD");
+
+      // حساب آخر يوم في الشهر
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endOfMonth = `${year}-${monthNum}-${String(lastDay).padStart(
+        2,
+        "0"
+      )}`;
 
       query.date = {
         $gte: startOfMonth,
         $lte: endOfMonth,
       };
+
+      console.log(`🔍 Month filter: ${startOfMonth} to ${endOfMonth}`);
+    }
+    // فلتر حسب التاريخ (إذا لم يتم تحديد شهر)
+    else if (startDate || endDate) {
+      query.date = {};
+      if (startDate) query.date.$gte = startDate;
+      if (endDate) query.date.$lte = endDate;
     }
 
     if (userId) {
@@ -162,10 +183,7 @@ export const getDailyRecords = async (req, res) => {
     sort[sortBy] = sortOrder === "asc" ? 1 : -1;
 
     const [records, total] = await Promise.all([
-      DailyRecord.find(query)
-        .sort(sort)
-        .skip(skip)
-        .limit(Number(limit)),
+      DailyRecord.find(query).sort(sort).skip(skip).limit(Number(limit)).lean(),
       DailyRecord.countDocuments(query),
     ]);
 
@@ -196,10 +214,27 @@ export const getDailyRecords = async (req, res) => {
 // @access  Private
 export const getSummaryStats = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, month } = req.query;
 
     const dateQuery = {};
-    if (startDate || endDate) {
+
+    // ✅ فلتر حسب الشهر
+    if (month) {
+      const [year, monthNum] = month.split("-");
+      const startOfMonth = `${year}-${monthNum}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endOfMonth = `${year}-${monthNum}-${String(lastDay).padStart(
+        2,
+        "0"
+      )}`;
+
+      dateQuery.date = {
+        $gte: startOfMonth,
+        $lte: endOfMonth,
+      };
+    }
+    // فلتر حسب التاريخ
+    else if (startDate || endDate) {
       dateQuery.date = {};
       if (startDate) dateQuery.date.$gte = startDate;
       if (endDate) dateQuery.date.$lte = endDate;
@@ -234,6 +269,7 @@ export const getSummaryStats = async (req, res) => {
         {
           $group: {
             _id: "$user_id",
+            name: { $first: "$name" },
             totalLate: { $sum: "$lateMinutes" },
             lateCount: { $sum: 1 },
           },
@@ -292,20 +328,40 @@ export const getSummaryStats = async (req, res) => {
 // @access  Private
 export const getAvailableMonths = async (req, res) => {
   try {
+    console.log("🔍 Fetching available months...");
+
     // جلب جميع التواريخ الفريدة
-    const dates = await DailyRecord.distinct('date');
-    
+    const dates = await DailyRecord.distinct("date");
+
+    if (!dates || dates.length === 0) {
+      return res.json({
+        success: true,
+        data: { months: [] },
+      });
+    }
+
+    console.log(`📅 Found ${dates.length} unique dates`);
+
     // استخراج الأشهر الفريدة
-    const months = [...new Set(
-      dates.map(date => date.substring(0, 7)) // "2025-11"
-    )].sort().reverse(); // ترتيب عكسي (الأحدث أولاً)
+    const monthsSet = new Set();
+    dates.forEach((date) => {
+      if (date && typeof date === "string" && date.length >= 7) {
+        const month = date.substring(0, 7); // "2025-11"
+        monthsSet.add(month);
+      }
+    });
+
+    // تحويل لمصفوفة وترتيب
+    const months = Array.from(monthsSet).sort().reverse(); // الأحدث أولاً
+
+    console.log("✅ Available months:", months);
 
     res.json({
       success: true,
-      data: { months }
+      data: { months },
     });
   } catch (error) {
-    console.error("Get available months error:", error);
+    console.error("❌ Get available months error:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching available months",
@@ -313,24 +369,39 @@ export const getAvailableMonths = async (req, res) => {
     });
   }
 };
-
 // @desc    Get employee attendance report
 // @route   GET /api/attendance/employee/:userId
 // @access  Private
 export const getEmployeeReport = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, month } = req.query;
 
     const query = { user_id: userId };
 
-    if (startDate || endDate) {
+    // ✅ فلتر حسب الشهر
+    if (month) {
+      const [year, monthNum] = month.split("-");
+      const startOfMonth = `${year}-${monthNum}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endOfMonth = `${year}-${monthNum}-${String(lastDay).padStart(
+        2,
+        "0"
+      )}`;
+
+      query.date = {
+        $gte: startOfMonth,
+        $lte: endOfMonth,
+      };
+    }
+    // فلتر حسب التاريخ
+    else if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = startDate;
       if (endDate) query.date.$lte = endDate;
     }
 
-    const records = await DailyRecord.find(query).sort({ date: 1 });
+    const records = await DailyRecord.find(query).sort({ date: 1 }).lean();
 
     // Calculate employee stats
     const stats = {
@@ -355,18 +426,13 @@ export const getEmployeeReport = async (req, res) => {
         ? ((workDays / totalWorkableDays) * 100).toFixed(2)
         : 0;
 
-    // format data for frontend table
-    // للتاريخ: سنة فقط
-    function formatDateDMY(isoString) {
-      if (!isoString) return "-";
-      const date = new Date(isoString);
-      const day = String(date.getDate()).padStart(2, "0");
-      const month = String(date.getMonth() + 1).padStart(2, "0"); // الأشهر تبدأ من 0
-      const year = date.getFullYear();
+    // Format helpers
+    function formatDateDMY(dateString) {
+      if (!dateString) return "-";
+      const [year, month, day] = dateString.split("-");
       return `${day}-${month}-${year}`;
     }
 
-    // للوقت: ساعة:دقيقة فقط
     function formatTime(isoString) {
       if (!isoString) return "-";
       const date = new Date(isoString);
@@ -375,22 +441,17 @@ export const getEmployeeReport = async (req, res) => {
       ).padStart(2, "0")}`;
     }
 
-    // تعديل عند تجهيز tableData
+    // Format table data
     const tableData = records.map((r) => ({
       id: r.user_id,
       name: r.name || "-",
-      date: formatDateDMY(r.date), // سنة فقط
-      firstRecord: formatTime(r.firstCheckIn), // ساعة:دقيقة
-      lastRecord: formatTime(r.lastCheckOut), // ساعة:دقيقة
+      date: formatDateDMY(r.date),
+      firstRecord: formatTime(r.firstCheckIn),
+      lastRecord: formatTime(r.lastCheckOut),
       workHours: r.totalHours?.toFixed(2) || "-",
       lateMinutes: r.lateMinutes || "-",
       status: r.status?.toLowerCase() || "-",
     }));
-
-    // res.json({
-    //   success: true,
-    //   data: tableData,
-    // });
 
     res.json({
       success: true,
@@ -409,7 +470,6 @@ export const getEmployeeReport = async (req, res) => {
     });
   }
 };
-
 // @desc    Reprocess attendance for date range
 // @route   POST /api/attendance/reprocess
 // @access  Private
