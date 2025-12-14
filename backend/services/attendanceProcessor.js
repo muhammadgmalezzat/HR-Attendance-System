@@ -116,6 +116,7 @@ export const processDailyRecord = async (user_id, date, logs) => {
       { user_id, date },
       {
         user_id,
+        name: user?.name || "-",
         date,
         status: "DayOff",
         appliedShift: null,
@@ -148,6 +149,7 @@ export const processDailyRecord = async (user_id, date, logs) => {
       { user_id, date },
       {
         user_id,
+        name: user.name,
         date,
         status: "Absent",
         appliedShift: {
@@ -216,6 +218,7 @@ export const processDailyRecord = async (user_id, date, logs) => {
     {
       user_id,
       date,
+      name: user.name,
       firstCheckIn,
       lastCheckOut,
       totalHours: Number(totalHours.toFixed(2)),

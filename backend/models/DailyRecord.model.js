@@ -7,6 +7,7 @@ const dailyRecordSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    name: { type: String, default: "-" },
     date: {
       type: String, // YYYY-MM-DD
       required: true,
@@ -42,8 +43,8 @@ const dailyRecordSchema = new mongoose.Schema(
     // All check-ins for the day
     checkIns: [
       {
-        timestamp: Date,
-        type: String,
+        timestamp: { type: Date, required: true },
+        type: { type: String, default: "unknown" },
       },
     ],
     // Metadata
