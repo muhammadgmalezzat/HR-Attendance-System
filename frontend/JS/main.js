@@ -1,483 +1,219 @@
-let usersData = {};
-let attendanceData = [];
-let filteredData = [];
-let currentPage = 1;
-const itemsPerPage = 20;
+// ================================
+// Main Application Entry Point
+// ================================
 
-// معالجة ملف الموظفين (Excel)
-document
-  .getElementById("excelUsersFile")
-  .addEventListener("change", function (e) {
-    const file = e.target.files[0];
-    if (!file) return;
+import { STATE } from "./config.js";
+import { initAuth, loginToBackend } from "./auth.js";
+import { handleUsersExcelFile, handleAttendanceFile } from "./fileHandlers.js";
+import {
+  displayData,
+  loadDailyRecordsFromBackend,
+  generateLocalReport,
+  loadAvailableMonths,
+} from "./table.js";
+import {
+  downloadExcel,
+  downloadEmployeeExcel,
+  downloadIndividualExcels,
+} from "./exports.js";
+import { updateConnectionStatus, resetUI, updateQuickStats } from "./ui.js";
+import { applyFilters } from "./dataProcessing.js";
 
-    const usersInfo = document.getElementById("usersInfo");
-    usersInfo.style.display = "block";
-    usersInfo.className = "file-info";
-    usersInfo.textContent = "⏳ جاري قراءة ملف الموظفين...";
+/**
+ * تهيئة التطبيق عند تحميل الصفحة
+ */
+async function initializeApp() {
+  console.log("🚀 Initializing Attendance System...");
 
-    const reader = new FileReader();
-    reader.onload = function (event) {
-      try {
-        const data = new Uint8Array(event.target.result);
-        const workbook = XLSX.read(data, { type: "array" });
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
-          header: 1,
-        });
+  // تهيئة المصادقة
+  await initAuth();
+  updateConnectionStatus();
 
-        usersData = parseExcelData(jsonData);
-
-        usersInfo.className = "file-info success";
-        usersInfo.textContent = `✅ تم تحميل ${
-          Object.keys(usersData).length
-        } موظف`;
-        updateQuickStats();
-      } catch (error) {
-        usersInfo.className = "file-info error";
-        usersInfo.textContent = `❌ خطأ: ${error.message}`;
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-function parseExcelData(data) {
-  const users = {};
-  if (data.length === 0) return users;
-
-  const headers = data[0];
-  const userIdCol = findColumnIndex(headers, ["user_id", "id", "رقم"]);
-  const nameCol = findColumnIndex(headers, ["name", "الاسم", "اسم"]);
-  const jobCol = findColumnIndex(headers, ["job", "الوظيفة", "وظيفة"]);
-  const genderCol = findColumnIndex(headers, ["gender", "الجنس", "جنس"]);
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
-
-    const userId = row[userIdCol]?.toString().trim();
-    const name = row[nameCol]?.toString().trim();
-
-    if (userId && name) {
-      users[userId] = {
-        id: userId,
-        name: name,
-        job: row[jobCol]?.toString().trim() || "",
-        gender: row[genderCol]?.toString().trim() || "",
-      };
-    }
+  //  جلب الأشهر المتاحة
+  if (STATE.isBackendConnected) {
+    await loadAvailableMonths();
   }
-  return users;
-}
+  // ربط أحداث الملفات
+  setupFileHandlers();
 
-function findColumnIndex(headers, possibleNames) {
-  for (let i = 0; i < headers.length; i++) {
-    const header = headers[i]?.toString().toLowerCase().trim();
-    if (possibleNames.some((name) => header.includes(name.toLowerCase()))) {
-      return i;
-    }
-  }
-  return 0;
-}
+  // ربط أحداث الأزرار
+  setupButtonHandlers();
 
-// معالجة ملف الحضور (CSV)
-document
-  .getElementById("attendanceFile")
-  .addEventListener("change", function (e) {
-    const file = e.target.files[0];
-    if (!file) return;
+  // ربط أحداث الفلاتر
+  setupFilterHandlers();
 
-    const attInfo = document.getElementById("attendanceInfo");
-    attInfo.style.display = "block";
-    attInfo.className = "file-info";
-    attInfo.textContent = "⏳ جاري قراءة ملف الحضور...";
-
-    const reader = new FileReader();
-    reader.onload = function (event) {
-      try {
-        const content = event.target.result;
-        attendanceData = parseAttendanceFile(content);
-
-        attInfo.className = "file-info success";
-        attInfo.textContent = `✅ تم تحميل ${attendanceData.length} سجل حضور`;
-        updateQuickStats();
-      } catch (error) {
-        attInfo.className = "file-info error";
-        attInfo.textContent = `❌ خطأ: ${error.message}`;
-      }
-    };
-    reader.readAsText(file, "UTF-8");
-  });
-
-function parseAttendanceFile(content) {
-  const attendance = [];
-  const lines = content.split("\n");
-
-  for (let line of lines) {
-    if (!line.trim()) continue;
-
-    const parts = line.split("\t").filter((part) => part.trim());
-    if (parts.length >= 2) {
-      const id = parts[0].replace(/\D/g, "");
-      const datetime = parts[1].trim();
-
-      if (id && datetime) {
-        attendance.push({
-          id: id,
-          datetime: datetime,
-          date: datetime.split(" ")[0],
-          time: datetime.split(" ")[1],
-        });
-      }
-    }
-  }
-  return attendance;
-}
-
-function generateReport() {
-  if (Object.keys(usersData).length === 0 || attendanceData.length === 0) {
-    alert("⚠️ يرجى تحميل ملف الموظفين وملف الحضور أولاً");
-    return;
-  }
-
-  filteredData = processAttendanceData();
-  currentPage = 1;
-  displayData();
-
-  document.getElementById("downloadExcel").disabled = false;
-  document.getElementById("downloadEmployeeExcel").disabled = false;
-  document.getElementById("downloadIndividual").disabled = false;
-
+  // تحديث الإحصائيات
   updateQuickStats();
+
+  console.log("✅ App initialized successfully");
 }
 
-function processAttendanceData() {
-  const report = [];
-  const shiftStart = document.getElementById("shiftStart").value;
-  const expectedHours = parseFloat(document.getElementById("workHours").value);
+/**
+ * ربط معالجات الملفات
+ */
+function setupFileHandlers() {
+  const usersFileInput = document.getElementById("excelUsersFile");
+  const attendanceFileInput = document.getElementById("attendanceFile");
 
-  const dailyRecords = {};
-
-  for (const record of attendanceData) {
-    const key = `${record.id}|${record.date}`;
-    if (!dailyRecords[key]) {
-      dailyRecords[key] = {
-        id: record.id,
-        date: record.date,
-        records: [],
-      };
-    }
-    dailyRecords[key].records.push(record.time);
+  if (usersFileInput) {
+    usersFileInput.addEventListener("change", handleUsersExcelFile);
   }
 
-  for (const key in dailyRecords) {
-    const [id, date] = key.split("|");
-    const records = dailyRecords[key].records.sort();
+  if (attendanceFileInput) {
+    attendanceFileInput.addEventListener("change", handleAttendanceFile);
+  }
+}
 
-    const firstRecord = records[0];
-    const lastRecord = records[records.length - 1];
+/**
+ * ربط معالجات الأزرار
+ */
+function setupButtonHandlers() {
+  // زر توليد التقرير
+  const generateBtn = document.getElementById("generateReport");
+  if (generateBtn) {
+    generateBtn.addEventListener("click", generateLocalReport);
+  }
 
-    const startTime = new Date(`2000-01-01 ${firstRecord}`);
-    const endTime = new Date(`2000-01-01 ${lastRecord}`);
-    const workHours = (endTime - startTime) / (1000 * 60 * 60);
+  // زر جلب من الخادم
+  const loadBtn = document.getElementById("loadFromBackend");
+  if (loadBtn) {
+    loadBtn.addEventListener("click", loadDailyRecordsFromBackend);
+  }
 
-    const shiftStartTime = new Date(`2000-01-01 ${shiftStart}`);
-    const lateMinutes =
-      startTime > shiftStartTime
-        ? Math.round((startTime - shiftStartTime) / (1000 * 60))
-        : 0;
+  // أزرار التحميل
+  const downloadExcelBtn = document.getElementById("downloadExcel");
+  if (downloadExcelBtn) {
+    downloadExcelBtn.addEventListener("click", downloadExcel);
+  }
 
-    let status = "present";
-    if (workHours < expectedHours * 0.5) {
-      status = "absent";
-    } else if (lateMinutes > 30) {
-      status = "late";
+  const downloadEmployeeBtn = document.getElementById("downloadEmployeeExcel");
+  if (downloadEmployeeBtn) {
+    downloadEmployeeBtn.addEventListener("click", downloadEmployeeExcel);
+  }
+
+  const downloadIndividualBtn = document.getElementById("downloadIndividual");
+  if (downloadIndividualBtn) {
+    downloadIndividualBtn.addEventListener("click", downloadIndividualExcels);
+  }
+
+  // زر إعادة التعيين
+  const resetBtn = document.getElementById("resetData");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", handleReset);
+  }
+
+  // زر إعادة الاتصال
+  const reconnectBtn = document.getElementById("reconnectBtn");
+  if (reconnectBtn) {
+    reconnectBtn.addEventListener("click", async () => {
+      reconnectBtn.disabled = true;
+      reconnectBtn.textContent = "⏳ جاري الاتصال...";
+
+      await loginToBackend();
+      updateConnectionStatus();
+
+      reconnectBtn.disabled = false;
+      reconnectBtn.innerHTML = "<span>🔄 إعادة الاتصال</span>";
+    });
+  }
+}
+
+/**
+ * ربط معالجات الفلاتر
+ */
+function setupFilterHandlers() {
+  const searchInput = document.getElementById("searchInput");
+  const statusFilter = document.getElementById("statusFilter");
+  const monthFilter = document.getElementById("monthFilter"); // ✅ إضافة
+  const applyFiltersBtn = document.getElementById("applyFilters");
+
+  const applyCurrentFilters = () => {
+    if (!STATE.originalData || STATE.originalData.length === 0) {
+      console.warn("⚠️ No original data to filter");
+      return;
     }
 
-    report.push({
-      id: id,
-      name: usersData[id]?.name || "غير معروف",
-      date: date,
-      firstRecord: firstRecord,
-      lastRecord: lastRecord,
-      workHours: workHours.toFixed(2),
-      lateMinutes: lateMinutes,
-      status: status,
+    const filters = {
+      searchTerm: searchInput?.value || "",
+      status: statusFilter?.value || "all",
+    };
+
+    console.log("🔍 Applying filters:", filters);
+
+    STATE.filteredData = applyFilters(STATE.originalData, filters);
+    STATE.currentPage = 1;
+    displayData();
+
+    console.log(
+      `✅ Filtered: ${STATE.filteredData.length} / ${STATE.originalData.length} records`
+    );
+  };
+
+  // ✅ عند تغيير الشهر، نجلب البيانات من جديد
+  if (monthFilter) {
+    monthFilter.addEventListener("change", async () => {
+      STATE.selectedMonth = monthFilter.value;
+      await loadDailyRecordsFromBackend();
     });
   }
 
-  return report.sort((a, b) => {
-    if (a.date === b.date) {
-      return a.id.localeCompare(b.id);
-    }
-    return a.date.localeCompare(b.date);
-  });
-}
-
-function displayData() {
-  const tbody = document.getElementById("tableBody");
-
-  if (filteredData.length === 0) {
-    tbody.innerHTML =
-      '<tr><td colspan="8" style="text-align: center; padding: 40px;">لا توجد بيانات لعرضها</td></tr>';
-    return;
+  if (searchInput) {
+    searchInput.addEventListener("input", applyCurrentFilters);
   }
 
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = Math.min(startIndex + itemsPerPage, filteredData.length);
-  const pageData = filteredData.slice(startIndex, endIndex);
-
-  let html = "";
-  for (const record of pageData) {
-    const statusClass = record.status;
-    const statusText =
-      record.status === "present"
-        ? "حاضر"
-        : record.status === "absent"
-        ? "غائب"
-        : "متأخر";
-
-    html += `
-                    <tr>
-                        <td>${record.id}</td>
-                        <td><strong>${record.name}</strong></td>
-                        <td>${record.date}</td>
-                        <td>${record.firstRecord || "-"}</td>
-                        <td>${record.lastRecord || "-"}</td>
-                        <td>${record.workHours}</td>
-                        <td>${
-                          record.lateMinutes > 0 ? record.lateMinutes : "-"
-                        }</td>
-                        <td><span class="${statusClass}">${statusText}</span></td>
-                    </tr>
-                `;
-  }
-  tbody.innerHTML = html;
-  createPagination(totalPages);
-}
-
-function createPagination(totalPages) {
-  const pagination = document.getElementById("pagination");
-  if (totalPages <= 1) {
-    pagination.innerHTML = "";
-    return;
+  if (statusFilter) {
+    statusFilter.addEventListener("change", applyCurrentFilters);
   }
 
-  let html = "";
-  if (currentPage > 1) {
-    html += `<button class="page-btn" onclick="changePage(${
-      currentPage - 1
-    })">السابق</button>`;
-  }
-
-  const startPage = Math.max(1, currentPage - 2);
-  const endPage = Math.min(totalPages, startPage + 4);
-
-  for (let i = startPage; i <= endPage; i++) {
-    html += `<button class="page-btn ${
-      i === currentPage ? "active" : ""
-    }" onclick="changePage(${i})">${i}</button>`;
-  }
-
-  if (currentPage < totalPages) {
-    html += `<button class="page-btn" onclick="changePage(${
-      currentPage + 1
-    })">التالي</button>`;
-  }
-
-  pagination.innerHTML = html;
-}
-
-function changePage(page) {
-  currentPage = page;
-  displayData();
-}
-
-function applyFilters() {
-  if (!filteredData || filteredData.length === 0) return;
-
-  const originalData = processAttendanceData();
-  let result = [...originalData];
-
-  const selectedStatus = document.getElementById("statusFilter").value;
-  if (selectedStatus !== "all") {
-    result = result.filter((record) => record.status === selectedStatus);
-  }
-
-  const searchTerm = document.getElementById("searchInput").value.toLowerCase();
-  if (searchTerm) {
-    result = result.filter(
-      (record) =>
-        record.name.toLowerCase().includes(searchTerm) ||
-        record.id.includes(searchTerm)
-    );
-  }
-
-  filteredData = result;
-  currentPage = 1;
-  displayData();
-}
-
-document.getElementById("searchInput").addEventListener("input", applyFilters);
-
-function updateQuickStats() {
-  document.getElementById("totalEmployees").textContent =
-    Object.keys(usersData).length;
-
-  if (filteredData.length > 0) {
-    const presentCount = filteredData.filter(
-      (r) => r.status === "present"
-    ).length;
-    const attendanceRate = Math.round(
-      (presentCount / filteredData.length) * 100
-    );
-    document.getElementById("avgAttendance").textContent = `${attendanceRate}%`;
-  } else {
-    document.getElementById("avgAttendance").textContent = "0%";
+  if (applyFiltersBtn) {
+    applyFiltersBtn.addEventListener("click", applyCurrentFilters);
   }
 }
 
-function downloadExcel() {
-  if (filteredData.length === 0) {
-    alert("لا توجد بيانات لتحميلها");
-    return;
-  }
-
-  const exportData = filteredData.map((record) => ({
-    "رقم الموظف": record.id,
-    "اسم الموظف": record.name,
-    التاريخ: record.date,
-    "أول حضور": record.firstRecord || "-",
-    "آخر انصراف": record.lastRecord || "-",
-    "ساعات العمل": record.workHours,
-    "دقائق التأخير": record.lateMinutes > 0 ? record.lateMinutes : "-",
-    الحالة:
-      record.status === "present"
-        ? "حاضر"
-        : record.status === "absent"
-        ? "غائب"
-        : "متأخر",
-  }));
-
-  const ws = XLSX.utils.json_to_sheet(exportData);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "تقرير الحضور");
-  XLSX.writeFile(wb, "تقرير_الحضور_الشامل.xlsx");
-}
-
-function downloadEmployeeExcel() {
-  if (filteredData.length === 0) {
-    alert("لا توجد بيانات لتحميلها");
-    return;
-  }
-
-  const employees = {};
-  for (const record of filteredData) {
-    if (!employees[record.id]) {
-      employees[record.id] = {
-        name: record.name,
-        records: [],
-      };
-    }
-    employees[record.id].records.push(record);
-  }
-
-  const wb = XLSX.utils.book_new();
-
-  for (const id in employees) {
-    const employee = employees[id];
-    const exportData = employee.records.map((record) => ({
-      التاريخ: record.date,
-      "أول حضور": record.firstRecord || "-",
-      "آخر انصراف": record.lastRecord || "-",
-      "ساعات العمل": record.workHours,
-      "دقائق التأخير": record.lateMinutes > 0 ? record.lateMinutes : "-",
-      الحالة:
-        record.status === "present"
-          ? "حاضر"
-          : record.status === "absent"
-          ? "غائب"
-          : "متأخر",
-    }));
-
-    let sheetName = `${employee.name}_${id}`
-      .replace(/[\\/*[\]:?]/g, "")
-      .substring(0, 31);
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  }
-
-  XLSX.writeFile(wb, "تقارير_الموظفين.xlsx");
-}
-
-function downloadIndividualExcels() {
-  if (filteredData.length === 0) {
-    alert("لا توجد بيانات لتحميلها");
-    return;
-  }
-
-  const employees = {};
-  for (const record of filteredData) {
-    if (!employees[record.id]) {
-      employees[record.id] = {
-        name: record.name,
-        records: [],
-      };
-    }
-    employees[record.id].records.push(record);
-  }
-
-  let count = 0;
-  for (const id in employees) {
-    const employee = employees[id];
-    const exportData = employee.records.map((record) => ({
-      التاريخ: record.date,
-      "أول حضور": record.firstRecord || "-",
-      "آخر انصراف": record.lastRecord || "-",
-      "ساعات العمل": record.workHours,
-      "دقائق التأخير": record.lateMinutes > 0 ? record.lateMinutes : "-",
-      الحالة:
-        record.status === "present"
-          ? "حاضر"
-          : record.status === "absent"
-          ? "غائب"
-          : "متأخر",
-    }));
-
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "الحضور");
-
-    const fileName = `${employee.name}_${id}.xlsx`.replace(/[\\/*[\]:?]/g, "_");
-    XLSX.writeFile(wb, fileName);
-    count++;
-  }
-
-  alert(`✅ تم تحميل ${count} ملف Excel منفصل لكل موظف`);
-}
-
-function resetData() {
+/**
+ * معالج زر إعادة التعيين
+ */
+function handleReset() {
   if (!confirm("هل أنت متأكد من إعادة تعيين جميع البيانات؟")) {
     return;
   }
 
-  usersData = {};
-  attendanceData = [];
-  filteredData = [];
-  currentPage = 1;
+  // مسح البيانات
+  STATE.usersData = {};
+  STATE.attendanceData = [];
+  STATE.originalData = []; // ✅ مسح البيانات الأصلية
+  STATE.filteredData = [];
+  STATE.currentPage = 1;
 
-  document.getElementById("excelUsersFile").value = "";
-  document.getElementById("attendanceFile").value = "";
-  document.getElementById("usersInfo").style.display = "none";
-  document.getElementById("attendanceInfo").style.display = "none";
-  document.getElementById("tableBody").innerHTML =
-    '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #999;">قم برفع ملفات الموظفين والحضور أولاً</td></tr>';
-  document.getElementById("pagination").innerHTML = "";
+  // مسح الملفات
+  const usersFileInput = document.getElementById("excelUsersFile");
+  const attendanceFileInput = document.getElementById("attendanceFile");
 
-  document.getElementById("downloadExcel").disabled = true;
-  document.getElementById("downloadEmployeeExcel").disabled = true;
-  document.getElementById("downloadIndividual").disabled = true;
+  if (usersFileInput) usersFileInput.value = "";
+  if (attendanceFileInput) attendanceFileInput.value = "";
 
-  updateQuickStats();
+  // مسح الفلاتر
+  const searchInput = document.getElementById("searchInput");
+  const statusFilter = document.getElementById("statusFilter");
+
+  if (searchInput) searchInput.value = "";
+  if (statusFilter) statusFilter.value = "all";
+
+  // إعادة تعيين الواجهة
+  resetUI();
+
+  console.log("✅ Data reset complete");
 }
+
+// تهيئة التطبيق عند تحميل الصفحة
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializeApp);
+} else {
+  initializeApp();
+}
+
+// Export للاستخدام في HTML onclick attributes
+window.changePage = (page) => {
+  STATE.currentPage = page;
+  displayData();
+};
