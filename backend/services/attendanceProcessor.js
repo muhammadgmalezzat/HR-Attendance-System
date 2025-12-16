@@ -38,8 +38,16 @@ export const processAttendanceLogs = async (uploadBatchId = null) => {
 
     console.log(`📊 Found ${rawLogs.length} unprocessed logs`);
 
-    // Group logs by user and date
-    const groupedLogs = groupLogsByUserAndDate(rawLogs);
+    // ✅ تغيير: جمّع السجلات حسب user_id و date فقط (بدون فلترة بالـ shift window)
+    const groupedLogs = {};
+
+    for (const log of rawLogs) {
+      const key = `${log.user_id}|${log.date}`;
+      if (!groupedLogs[key]) {
+        groupedLogs[key] = [];
+      }
+      groupedLogs[key].push(log);
+    }
 
     let created = 0;
     let updated = 0;
@@ -74,6 +82,61 @@ export const processAttendanceLogs = async (uploadBatchId = null) => {
     throw error;
   }
 };
+
+// export const processAttendanceLogs = async (uploadBatchId = null) => {
+//   try {
+//     console.log("🔄 Starting attendance processing...");
+
+//     // Get unprocessed logs
+//     const query = uploadBatchId
+//       ? { uploadBatchId, processed: false }
+//       : { processed: false };
+
+//     const rawLogs = await RawAttendance.find(query).sort({ timestamp: 1 });
+
+//     if (rawLogs.length === 0) {
+//       console.log("ℹ️  No unprocessed logs found");
+//       return { processed: 0, created: 0, updated: 0 };
+//     }
+
+//     console.log(`📊 Found ${rawLogs.length} unprocessed logs`);
+
+//     // Group logs by user and date
+//     const groupedLogs = groupLogsByUserAndDate(rawLogs);
+
+//     let created = 0;
+//     let updated = 0;
+
+//     // Process each user-date group
+//     for (const [key, logs] of Object.entries(groupedLogs)) {
+//       const [user_id, date] = key.split("|");
+
+//       try {
+//         const result = await processDailyRecord(user_id, date, logs);
+//         if (result.isNew) created++;
+//         else updated++;
+//       } catch (err) {
+//         console.error(`❌ Error processing ${key}:`, err.message);
+//       }
+//     }
+
+//     // Mark logs as processed
+//     await RawAttendance.updateMany(query, { $set: { processed: true } });
+
+//     console.log(
+//       `✅ Processing complete: ${created} created, ${updated} updated`
+//     );
+
+//     return {
+//       processed: rawLogs.length,
+//       created,
+//       updated,
+//     };
+//   } catch (error) {
+//     console.error("❌ Error in processAttendanceLogs:", error);
+//     throw error;
+//   }
+// };
 
 /**
  * Group raw logs by user_id and date
@@ -116,7 +179,7 @@ const processDailyRecord = async (user_id, date, logs) => {
       { user_id, date },
       {
         user_id,
-        name: user.name, // ✅ حفظ الاسم
+        name: user.name,
         date,
         status: "DayOff",
         appliedShift: null,
@@ -129,27 +192,14 @@ const processDailyRecord = async (user_id, date, logs) => {
     return { isNew: !record, record };
   }
 
-  // Calculate shift times
-  const shiftTimes = calculateShiftWindow(date, shift, config);
-
-  // Filter logs within the shift window
-  const validLogs = logs.filter((log) => {
-    const logTime = moment(log.timestamp);
-    return logTime.isBetween(
-      shiftTimes.windowStart,
-      shiftTimes.windowEnd,
-      null,
-      "[]"
-    );
-  });
-
-  if (validLogs.length === 0) {
-    // No valid logs - mark as absent
+  // ✅ تغيير رئيسي: استخدم جميع السجلات في اليوم، مش بس اللي في shift window
+  if (logs.length === 0) {
+    // No logs at all - mark as absent
     const record = await DailyRecord.findOneAndUpdate(
       { user_id, date },
       {
         user_id,
-        name: user.name, // ✅ حفظ الاسم
+        name: user.name,
         date,
         status: "Absent",
         appliedShift: {
@@ -168,34 +218,36 @@ const processDailyRecord = async (user_id, date, logs) => {
   }
 
   // Sort logs by timestamp
-  validLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  logs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-  // Get first check-in and last check-out
-  const firstCheckIn = validLogs[0].timestamp;
-  let lastCheckOut = validLogs[validLogs.length - 1].timestamp;
+  // ✅ استخدم أول وآخر سجل في اليوم كله
+  const firstCheckIn = logs[0].timestamp;
+  let lastCheckOut = logs[logs.length - 1].timestamp;
 
   // Auto check-out if needed
   let autoCheckOut = false;
   const timeDiff = (lastCheckOut - firstCheckIn) / (1000 * 60); // minutes
 
-  if (validLogs.length === 1 || timeDiff < 30) {
+  if (logs.length === 1 || timeDiff < 30) {
+    // Only one log or very short time - apply auto checkout
     lastCheckOut = new Date(
       firstCheckIn.getTime() + config.defaultAutoCheckout * 60000
     );
     autoCheckOut = true;
   }
 
-  // Calculate total hours
+  // ✅ احسب ساعات العمل الفعلية (من أول لآخر سجل)
   const totalHours = (lastCheckOut - firstCheckIn) / (1000 * 60 * 60);
 
-  // Calculate late minutes
+  // ✅ احسب التأخير بناءً على الشيفت
+  const shiftTimes = calculateShiftWindow(date, shift, config);
   const lateMinutes = calculateLateMinutes(
     firstCheckIn,
     shiftTimes.shiftStart,
     config.gracePeriod
   );
 
-  // Determine status
+  // ✅ حدد الحالة بناءً على ساعات العمل الفعلية
   const shiftDuration = calculateShiftDuration(shift);
   let status = "Present";
 
@@ -206,7 +258,7 @@ const processDailyRecord = async (user_id, date, logs) => {
   }
 
   // Prepare check-ins array
-  const checkIns = validLogs.map((log) => ({
+  const checkIns = logs.map((log) => ({
     timestamp: log.timestamp,
     type: log.type,
   }));
@@ -216,7 +268,7 @@ const processDailyRecord = async (user_id, date, logs) => {
     { user_id, date },
     {
       user_id,
-      name: user.name, // ✅ حفظ الاسم
+      name: user.name,
       date,
       firstCheckIn,
       lastCheckOut,
@@ -237,6 +289,149 @@ const processDailyRecord = async (user_id, date, logs) => {
 
   return { isNew: !record, record };
 };
+
+// const processDailyRecord = async (user_id, date, logs) => {
+//   // Get user configuration
+//   const user = await User.findOne({ user_id });
+
+//   if (!user) {
+//     console.warn(`⚠️  User ${user_id} not found, skipping`);
+//     return { isNew: false };
+//   }
+
+//   const config = getConfig(user);
+
+//   // Get shift for this date
+//   const dateObj = moment.tz(date, "YYYY-MM-DD", timezone).toDate();
+//   const shift = user.getShiftForDate(dateObj);
+
+//   // If shift is null (day off), mark as DayOff
+//   if (!shift) {
+//     const record = await DailyRecord.findOneAndUpdate(
+//       { user_id, date },
+//       {
+//         user_id,
+//         name: user.name, // ✅ حفظ الاسم
+//         date,
+//         status: "DayOff",
+//         appliedShift: null,
+//         totalHours: 0,
+//         lateMinutes: 0,
+//         notes: "Scheduled day off",
+//       },
+//       { upsert: true, new: true, setDefaultsOnInsert: true }
+//     );
+//     return { isNew: !record, record };
+//   }
+
+//   // Calculate shift times
+//   const shiftTimes = calculateShiftWindow(date, shift, config);
+
+//   // Filter logs within the shift window
+//   const validLogs = logs.filter((log) => {
+//     const logTime = moment(log.timestamp);
+//     return logTime.isBetween(
+//       shiftTimes.windowStart,
+//       shiftTimes.windowEnd,
+//       null,
+//       "[]"
+//     );
+//   });
+
+//   if (validLogs.length === 0) {
+//     // No valid logs - mark as absent
+//     const record = await DailyRecord.findOneAndUpdate(
+//       { user_id, date },
+//       {
+//         user_id,
+//         name: user.name, // ✅ حفظ الاسم
+//         date,
+//         status: "Absent",
+//         appliedShift: {
+//           from: shift.from,
+//           to: shift.to,
+//           nextDay: shift.nextDay || false,
+//         },
+//         totalHours: 0,
+//         lateMinutes: 0,
+//         checkIns: [],
+//         notes: "No attendance records found",
+//       },
+//       { upsert: true, new: true, setDefaultsOnInsert: true }
+//     );
+//     return { isNew: !record, record };
+//   }
+
+//   // Sort logs by timestamp
+//   validLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+//   // Get first check-in and last check-out
+//   const firstCheckIn = validLogs[0].timestamp;
+//   let lastCheckOut = validLogs[validLogs.length - 1].timestamp;
+
+//   // Auto check-out if needed
+//   let autoCheckOut = false;
+//   const timeDiff = (lastCheckOut - firstCheckIn) / (1000 * 60); // minutes
+
+//   if (validLogs.length === 1 || timeDiff < 30) {
+//     lastCheckOut = new Date(
+//       firstCheckIn.getTime() + config.defaultAutoCheckout * 60000
+//     );
+//     autoCheckOut = true;
+//   }
+
+//   // Calculate total hours
+//   const totalHours = (lastCheckOut - firstCheckIn) / (1000 * 60 * 60);
+
+//   // Calculate late minutes
+//   const lateMinutes = calculateLateMinutes(
+//     firstCheckIn,
+//     shiftTimes.shiftStart,
+//     config.gracePeriod
+//   );
+
+//   // Determine status
+//   const shiftDuration = calculateShiftDuration(shift);
+//   let status = "Present";
+
+//   if (totalHours < shiftDuration * config.absentThreshold) {
+//     status = "Absent";
+//   } else if (lateMinutes > 0) {
+//     status = "Late";
+//   }
+
+//   // Prepare check-ins array
+//   const checkIns = validLogs.map((log) => ({
+//     timestamp: log.timestamp,
+//     type: log.type,
+//   }));
+
+//   // Upsert daily record
+//   const record = await DailyRecord.findOneAndUpdate(
+//     { user_id, date },
+//     {
+//       user_id,
+//       name: user.name, // ✅ حفظ الاسم
+//       date,
+//       firstCheckIn,
+//       lastCheckOut,
+//       totalHours: Number(totalHours.toFixed(2)),
+//       lateMinutes,
+//       status,
+//       appliedShift: {
+//         from: shift.from,
+//         to: shift.to,
+//         nextDay: shift.nextDay || false,
+//       },
+//       checkIns,
+//       autoCheckOut,
+//       notes: autoCheckOut ? "Auto check-out applied" : "",
+//     },
+//     { upsert: true, new: true, setDefaultsOnInsert: true }
+//   );
+
+//   return { isNew: !record, record };
+// };
 /**
  * Calculate shift window (when to look for attendance)
  */

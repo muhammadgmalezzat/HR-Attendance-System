@@ -32,6 +32,7 @@ async function initializeApp() {
   //  جلب الأشهر المتاحة
   if (STATE.isBackendConnected) {
     await loadAvailableMonths();
+    console.log("loadAvailableMonths")
   }
   // ربط أحداث الملفات
   setupFileHandlers();
