@@ -1,11 +1,13 @@
 import User from "../models/User.model.js";
 
-import UploadHistory from"../models/UploadHistory.model.js";
-import { parseUsersData } from"../utils/fileParser.js";
+import UploadHistory from "../models/UploadHistory.model.js";
+import { parseUsersData } from "../utils/fileParser.js";
 
 // @desc    Bulk upload users
 // @route   POST /api/users/bulk-upload
 // @access  Public (or Protected based on requirements)
+
+//note this function called when user uploads excel/csv file containing users data
 export const bulkUploadUsers = async (req, res) => {
   try {
     const { users, fileName } = req.body;
@@ -25,11 +27,11 @@ export const bulkUploadUsers = async (req, res) => {
       recordsCount: users.length,
       status: "processing",
     });
-    console.log("🚀 ~ bulkUploadUsers ~ uploadHistory:", uploadHistory)
+   // console.log("🚀 ~ bulkUploadUsers ~ uploadHistory:", uploadHistory);
 
     // Parse users data
     const { users: parsedUsers, errors: parseErrors } = parseUsersData(users);
-    console.log("🚀 ~ bulkUploadUsers ~ parsedUsers:", parsedUsers)
+   // console.log("🚀 ~ bulkUploadUsers ~ parsedUsers:", parsedUsers);
 
     if (parsedUsers.length === 0) {
       uploadHistory.status = "failed";
@@ -52,13 +54,13 @@ export const bulkUploadUsers = async (req, res) => {
       },
     }));
 
-    //const result = await User.bulkWrite(bulkOps);
+    const result = await User.bulkWrite(bulkOps);
 
     // Update upload history
     uploadHistory.status = "completed";
     uploadHistory.usersCount = parsedUsers.length;
     uploadHistory.processedRecords =
-      //result.upsertedCount + result.modifiedCount;
+      result.upsertedCount + result.modifiedCount;
     uploadHistory.failedRecords = parseErrors.length;
     uploadHistory.errors = parseErrors;
     await uploadHistory.save();
@@ -70,8 +72,8 @@ export const bulkUploadUsers = async (req, res) => {
         total: users.length,
         successful: parsedUsers.length,
         failed: parseErrors.length,
-        //inserted: result.upsertedCount,
-        //updated: result.modifiedCount,
+        inserted: result.upsertedCount,
+        updated: result.modifiedCount,
         uploadId: uploadHistory._id,
         errors: parseErrors,
       },
@@ -105,7 +107,7 @@ export const getAllUsers = async (req, res) => {
     // Filters
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
+        { userData: { $regex: search, $options: "i" } },
         { user_id: { $regex: search, $options: "i" } },
       ];
     }
