@@ -16,6 +16,26 @@ import {
 /**
  * عرض البيانات في الجدول
  */
+
+function getArabicDayName(dateString) {
+  // dateString format: "YYYY-MM-DD"
+  const date = new Date(dateString);
+  const dayIndex = date.getDay();
+
+  const arabicDays = {
+    0: "الأحد",
+    1: "الإثنين",
+    2: "الثلاثاء",
+    3: "الأربعاء",
+    4: "الخميس",
+    5: "الجمعة",
+    6: "السبت",
+  };
+
+  return arabicDays[dayIndex] || "";
+}
+
+
 function displayData() {
   const tbody = document.getElementById("tableBody");
 
@@ -58,11 +78,13 @@ function displayData() {
         ? "متأخر"
         : "غائب");
 
+ const dayName = getArabicDayName(record.date);
+ const dateWithDay = `${record.date} (${dayName})`;
     html += `
-      <tr>
+       <tr>
         <td>${record.id}</td>
         <td><strong>${record.name}</strong></td>
-        <td>${record.date}</td>
+        <td>${dateWithDay}</td>
         <td>${record.firstRecord || "-"}</td>
         <td>${record.lastRecord || "-"}</td>
         <td>${record.workHours}</td>
@@ -248,39 +270,52 @@ async function loadDailyRecordsFromBackend(filters = {}) {
 
     if (result.success && result.data.records) {
       // ✅ البيانات جاية من Backend مع الاسم
-      const transformedRecords = result.data.records.map((record) => ({
-        id: record.user_id,
-        name: record.name || "غير معروف", // ✅ الاسم جاي من الـ DB
-        date: record.date,
-        firstRecord: record.firstCheckIn
-          ? new Date(record.firstCheckIn).toLocaleTimeString("ar-SA", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-              hour12: false,
-            })
-          : "-",
-        lastRecord: record.lastCheckOut
-          ? new Date(record.lastCheckOut).toLocaleTimeString("ar-SA", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-              hour12: false,
-            })
-          : "-",
-        workHours: record.totalHours ? record.totalHours.toFixed(2) : "0.00",
-        lateMinutes: record.lateMinutes || 0,
-        status: record.status.toLowerCase(),
-        statusText:
-          record.status === "Present"
-            ? "حاضر"
-            : record.status === "Late"
-            ? "متأخر"
-            : record.status === "DayOff"
-            ? "عطلة"
-            : "غائب",
-      }));
+      const transformedRecords = result.data.records.map((record) => {
+        // ✅ لو totalHours = 0 والموظف حاضر، فيه مشكلة
+        let workHours = record.totalHours
+          ? record.totalHours.toFixed(2)
+          : "0.00";
 
+        // Debug: لو فيه بصمة واحدة وساعات العمل 0
+        if (record.checkIns?.length === 1 && record.totalHours === 0) {
+          console.warn(
+            `⚠️ User ${record.user_id} on ${record.date}: Single check-in but 0 hours`
+          );
+        }
+
+        return {
+          id: record.user_id,
+          name: record.name || "غير معروف",
+          date: record.date,
+          firstRecord: record.firstCheckIn
+            ? new Date(record.firstCheckIn).toLocaleTimeString("ar-SA", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              })
+            : "-",
+          lastRecord: record.lastCheckOut
+            ? new Date(record.lastCheckOut).toLocaleTimeString("ar-SA", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              })
+            : "-",
+          workHours,
+          lateMinutes: record.lateMinutes || 0,
+          status: record.status.toLowerCase(),
+          statusText:
+            record.status === "Present"
+              ? "حاضر"
+              : record.status === "Late"
+              ? "متأخر"
+              : record.status === "DayOff"
+              ? "عطلة"
+              : "غائب",
+        };
+      });
       STATE.originalData = transformedRecords;
       STATE.filteredData = [...transformedRecords];
 
