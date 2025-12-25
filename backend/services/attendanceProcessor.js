@@ -159,7 +159,6 @@ export const groupLogsByUserAndDate = (logs) => {
  * Process a single daily record
  */
 const processDailyRecord = async (user_id, date, logs) => {
-  // Get user configuration
   const user = await User.findOne({ user_id });
 
   if (!user) {
@@ -168,12 +167,9 @@ const processDailyRecord = async (user_id, date, logs) => {
   }
 
   const config = getConfig(user);
-
-  // Get shift for this date
   const dateObj = moment.tz(date, "YYYY-MM-DD", timezone).toDate();
   const shift = user.getShiftForDate(dateObj);
 
-  // If shift is null (day off), mark as DayOff
   if (!shift) {
     const record = await DailyRecord.findOneAndUpdate(
       { user_id, date },
@@ -192,9 +188,7 @@ const processDailyRecord = async (user_id, date, logs) => {
     return { isNew: !record, record };
   }
 
-  // ✅ تغيير رئيسي: استخدم جميع السجلات في اليوم، مش بس اللي في shift window
   if (logs.length === 0) {
-    // No logs at all - mark as absent
     const record = await DailyRecord.findOneAndUpdate(
       { user_id, date },
       {
@@ -217,29 +211,31 @@ const processDailyRecord = async (user_id, date, logs) => {
     return { isNew: !record, record };
   }
 
-  // Sort logs by timestamp
   logs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-  // ✅ استخدم أول وآخر سجل في اليوم كله
   const firstCheckIn = logs[0].timestamp;
   let lastCheckOut = logs[logs.length - 1].timestamp;
 
-  // Auto check-out if needed
+  // ✅ الحل: لو بصمة واحدة، خلي lastCheckOut = firstCheckIn (ساعات = 0)
   let autoCheckOut = false;
-  const timeDiff = (lastCheckOut - firstCheckIn) / (1000 * 60); // minutes
+  const firstCheckInMoment = moment(firstCheckIn);
+  const lastCheckOutMoment = moment(lastCheckOut);
+  const timeDiff = lastCheckOutMoment.diff(firstCheckInMoment, "minutes");
 
+  // ✅ لو بصمة واحدة أو الفرق أقل من 30 دقيقة، ساعات العمل = 0
   if (logs.length === 1 || timeDiff < 30) {
-    // Only one log or very short time - apply auto checkout
-    lastCheckOut = new Date(
-      firstCheckIn.getTime() + config.defaultAutoCheckout * 60000
-    );
-    autoCheckOut = true;
+    lastCheckOut = firstCheckIn; // ✅ نفس الوقت = 0 ساعة
+    autoCheckOut = false; // ✅ مفيش auto checkout
   }
 
-  // ✅ احسب ساعات العمل الفعلية (من أول لآخر سجل)
-  const totalHours = (lastCheckOut - firstCheckIn) / (1000 * 60 * 60);
+  // احسب ساعات العمل الفعلية
+  const totalHours = moment(lastCheckOut).diff(
+    moment(firstCheckIn),
+    "hours",
+    true
+  );
 
-  // ✅ احسب التأخير بناءً على الشيفت
+  // احسب التأخير بناءً على الشيفت
   const shiftTimes = calculateShiftWindow(date, shift, config);
   const lateMinutes = calculateLateMinutes(
     firstCheckIn,
@@ -247,7 +243,7 @@ const processDailyRecord = async (user_id, date, logs) => {
     config.gracePeriod
   );
 
-  // ✅ حدد الحالة بناءً على ساعات العمل الفعلية
+  // حدد الحالة بناءً على ساعات العمل الفعلية
   const shiftDuration = calculateShiftDuration(shift);
   let status = "Present";
 
@@ -257,13 +253,11 @@ const processDailyRecord = async (user_id, date, logs) => {
     status = "Late";
   }
 
-  // Prepare check-ins array
   const checkIns = logs.map((log) => ({
     timestamp: log.timestamp,
     type: log.type,
   }));
 
-  // Upsert daily record
   const record = await DailyRecord.findOneAndUpdate(
     { user_id, date },
     {
@@ -282,14 +276,13 @@ const processDailyRecord = async (user_id, date, logs) => {
       },
       checkIns,
       autoCheckOut,
-      notes: autoCheckOut ? "Auto check-out applied" : "",
+      notes: logs.length === 1 ? "Single check-in only" : "",
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
   return { isNew: !record, record };
 };
-
 // const processDailyRecord = async (user_id, date, logs) => {
 //   // Get user configuration
 //   const user = await User.findOne({ user_id });
