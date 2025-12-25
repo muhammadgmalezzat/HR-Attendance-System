@@ -6,6 +6,7 @@ import {
   processAttendanceLogs,
   reprocessDateRange,
 } from "../services/attendanceProcessor.js";
+import User from "../models/User.model.js";
 
 // @desc    Upload attendance logs
 // @route   POST /api/attendance/upload
@@ -45,17 +46,31 @@ export const uploadAttendance = async (req, res) => {
     }
 
     // Add upload batch ID to records
-    const recordsWithBatch = records.map((r) => ({
-      ...r,
-      uploadBatchId: uploadHistory._id,
-      processed: false,
-    }));
+    const recordsWithBatch = records.map((r) => {
+      // تأكد إن checkIns موجودة كـ array
+      if (!Array.isArray(r.checkIns)) {
+        r.checkIns = [];
+      }
+
+      // تحويل كل عنصر في checkIns
+      r.checkIns = r.checkIns.map((ci) => ({
+        timestamp: new Date(ci.timestamp),
+        type: ci.type || "unknown",
+      }));
+
+      return {
+        ...r,
+        uploadBatchId: uploadHistory._id,
+        processed: false,
+      };
+    });
 
     // Insert raw attendance logs
     const insertedLogs = await RawAttendance.insertMany(recordsWithBatch);
 
     // Process logs immediately
     const processResult = await processAttendanceLogs(uploadHistory._id);
+    //console.log("🚀 ~ uploadAttendance ~ processResult:", processResult);
 
     // Update upload history
     uploadHistory.status = "completed";
@@ -104,6 +119,7 @@ export const getDailyRecords = async (req, res) => {
       endDate,
       userId,
       status,
+      month,
       sortBy = "date",
       sortOrder = "desc",
     } = req.query;
@@ -112,6 +128,40 @@ export const getDailyRecords = async (req, res) => {
 
     // Filters
     if (startDate || endDate) {
+      query.date = {};
+      if (startDate) query.date.$gte = startDate;
+      if (endDate) query.date.$lte = endDate;
+    }
+    if (month) {
+      // month format: "2025-11"
+      const [year, monthNum] = month.split("-");
+
+      if (!year || !monthNum) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid month format. Expected: YYYY-MM",
+        });
+      }
+
+      // حساب أول وآخر يوم في الشهر
+      const startOfMonth = `${year}-${monthNum}-01`;
+
+      // حساب آخر يوم في الشهر
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endOfMonth = `${year}-${monthNum}-${String(lastDay).padStart(
+        2,
+        "0"
+      )}`;
+
+      query.date = {
+        $gte: startOfMonth,
+        $lte: endOfMonth,
+      };
+
+      console.log(`🔍 Month filter: ${startOfMonth} to ${endOfMonth}`);
+    }
+    // فلتر حسب التاريخ (إذا لم يتم تحديد شهر)
+    else if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = startDate;
       if (endDate) query.date.$lte = endDate;
@@ -133,11 +183,7 @@ export const getDailyRecords = async (req, res) => {
     sort[sortBy] = sortOrder === "asc" ? 1 : -1;
 
     const [records, total] = await Promise.all([
-      DailyRecord.find(query)
-        .populate("user", "name job gender")
-        .sort(sort)
-        .skip(skip)
-        .limit(Number(limit)),
+      DailyRecord.find(query).sort(sort).skip(skip).limit(Number(limit)).lean(),
       DailyRecord.countDocuments(query),
     ]);
 
@@ -168,10 +214,27 @@ export const getDailyRecords = async (req, res) => {
 // @access  Private
 export const getSummaryStats = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, month } = req.query;
 
     const dateQuery = {};
-    if (startDate || endDate) {
+
+    // ✅ فلتر حسب الشهر
+    if (month) {
+      const [year, monthNum] = month.split("-");
+      const startOfMonth = `${year}-${monthNum}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endOfMonth = `${year}-${monthNum}-${String(lastDay).padStart(
+        2,
+        "0"
+      )}`;
+
+      dateQuery.date = {
+        $gte: startOfMonth,
+        $lte: endOfMonth,
+      };
+    }
+    // فلتر حسب التاريخ
+    else if (startDate || endDate) {
       dateQuery.date = {};
       if (startDate) dateQuery.date.$gte = startDate;
       if (endDate) dateQuery.date.$lte = endDate;
@@ -206,6 +269,7 @@ export const getSummaryStats = async (req, res) => {
         {
           $group: {
             _id: "$user_id",
+            name: { $first: "$name" },
             totalLate: { $sum: "$lateMinutes" },
             lateCount: { $sum: 1 },
           },
@@ -259,25 +323,85 @@ export const getSummaryStats = async (req, res) => {
   }
 };
 
+// @desc    Get available months
+// @route   GET /api/attendance/months
+// @access  Private
+export const getAvailableMonths = async (req, res) => {
+  try {
+    console.log("🔍 Fetching available months...");
+
+    // جلب جميع التواريخ الفريدة
+    const dates = await DailyRecord.distinct("date");
+
+    if (!dates || dates.length === 0) {
+      return res.json({
+        success: true,
+        data: { months: [] },
+      });
+    }
+
+    console.log(`📅 Found ${dates.length} unique dates`);
+
+    // استخراج الأشهر الفريدة
+    const monthsSet = new Set();
+    dates.forEach((date) => {
+      if (date && typeof date === "string" && date.length >= 7) {
+        const month = date.substring(0, 7); // "2025-11"
+        monthsSet.add(month);
+      }
+    });
+
+    // تحويل لمصفوفة وترتيب
+    const months = Array.from(monthsSet).sort().reverse(); // الأحدث أولاً
+
+    console.log("✅ Available months:", months);
+
+    res.json({
+      success: true,
+      data: { months },
+    });
+  } catch (error) {
+    console.error("❌ Get available months error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching available months",
+      error: error.message,
+    });
+  }
+};
 // @desc    Get employee attendance report
 // @route   GET /api/attendance/employee/:userId
 // @access  Private
 export const getEmployeeReport = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, month } = req.query;
 
     const query = { user_id: userId };
 
-    if (startDate || endDate) {
+    // ✅ فلتر حسب الشهر
+    if (month) {
+      const [year, monthNum] = month.split("-");
+      const startOfMonth = `${year}-${monthNum}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endOfMonth = `${year}-${monthNum}-${String(lastDay).padStart(
+        2,
+        "0"
+      )}`;
+
+      query.date = {
+        $gte: startOfMonth,
+        $lte: endOfMonth,
+      };
+    }
+    // فلتر حسب التاريخ
+    else if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = startDate;
       if (endDate) query.date.$lte = endDate;
     }
 
-    const records = await DailyRecord.find(query)
-      .sort({ date: 1 })
-      .populate("user", "name job gender");
+    const records = await DailyRecord.find(query).sort({ date: 1 }).lean();
 
     // Calculate employee stats
     const stats = {
@@ -302,11 +426,39 @@ export const getEmployeeReport = async (req, res) => {
         ? ((workDays / totalWorkableDays) * 100).toFixed(2)
         : 0;
 
+    // Format helpers
+    function formatDateDMY(dateString) {
+      if (!dateString) return "-";
+      const [year, month, day] = dateString.split("-");
+      return `${day}-${month}-${year}`;
+    }
+
+    function formatTime(isoString) {
+      if (!isoString) return "-";
+      const date = new Date(isoString);
+      return `${String(date.getHours()).padStart(2, "0")}:${String(
+        date.getMinutes()
+      ).padStart(2, "0")}`;
+    }
+
+    // Format table data
+    const tableData = records.map((r) => ({
+      id: r.user_id,
+      name: r.name || "-",
+      date: formatDateDMY(r.date),
+      firstRecord: formatTime(r.firstCheckIn),
+      lastRecord: formatTime(r.lastCheckOut),
+      workHours: r.totalHours?.toFixed(2) || "-",
+      lateMinutes: r.lateMinutes || "-",
+      status: r.status?.toLowerCase() || "-",
+    }));
+
     res.json({
       success: true,
       data: {
         records,
         stats,
+        tableData,
       },
     });
   } catch (error) {
@@ -318,7 +470,6 @@ export const getEmployeeReport = async (req, res) => {
     });
   }
 };
-
 // @desc    Reprocess attendance for date range
 // @route   POST /api/attendance/reprocess
 // @access  Private

@@ -6,6 +6,79 @@
     <title>نظام إدارة الحضور والانصراف</title>
     <link rel="stylesheet" href="./CSS/styles.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- CSS for animations -->
+    <style>
+      @keyframes slideIn {
+        from {
+          transform: translateX(400px);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+      @keyframes slideOut {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(400px);
+          opacity: 0;
+        }
+      }
+
+      .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #2c5aa0;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .file-info {
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 5px;
+        font-size: 14px;
+      }
+
+      .file-info.success {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+
+      .file-info.error {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+
+      .file-info.warning {
+        background: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeaa7;
+      }
+
+      .file-info.loading {
+        background: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+      }
+    </style>
   </head>
   <body>
     <div class="container">
@@ -13,37 +86,69 @@
         <h1>📊 نظام إدارة الحضور والانصراف</h1>
         <p>نظام متكامل لتتبع وتحليل حضور الموظفين</p>
       </div>
+      <header>
+        
+        <div style="display: flex; gap: 10px">
+          <button onclick="window.location.href='index.html'">
+            🏠 الرئيسية
+          </button>
+          <button onclick="window.location.href='users.html'">
+            👥 الموظفين
+          </button>
+        </div>
+      </header>
 
       <div class="main-content">
         <div class="sidebar">
+          <!-- Connection Status -->
           <div class="card">
-            <div class="card-title">📁 رفع الملفات</div>
-
+            <div class="card-title">حالة الاتصال</div>
             <div
-              class="file-upload"
-              onclick="document.getElementById('excelUsersFile').click()"
+              id="connectionStatus"
+              style="padding: 10px; border-radius: 5px; text-align: center"
             >
-              <p>📊 ملف الموظفين (Excel)</p>
+              <span id="statusText">جاري التحقق...</span>
+            </div>
+            <button
+              id="reconnectBtn"
+              style="width: 100%; margin-top: 10px; display: none"
+            >
+              🔄 إعادة الاتصال
+            </button>
+          </div>
+          <!-- File Upload -->
+
+          <div class="card">
+            <div class="card-title">رفع الملفات</div>
+            <div class="file-upload">
+              <p>رفع ملف الموظفين (Excel) 📊</p>
               <input
                 type="file"
                 id="excelUsersFile"
                 accept=".xlsx,.xls"
                 style="display: none"
               />
+              <button
+                onclick="document.getElementById('excelUsersFile').click()"
+              >
+                اختر الملف
+              </button>
             </div>
             <div id="usersInfo" class="file-info" style="display: none"></div>
 
-            <div
-              class="file-upload"
-              onclick="document.getElementById('attendanceFile').click()"
-            >
-              <p>⏰ ملف الحضور (CSV/TXT)</p>
+            <div class="file-upload" style="margin-top: 15px">
+              <p>رفع ملف الحضور (CSV/DAT) ⏰</p>
               <input
                 type="file"
                 id="attendanceFile"
-                accept=".csv,.txt"
+                accept=".csv,.dat,.txt"
                 style="display: none"
               />
+              <button
+                onclick="document.getElementById('attendanceFile').click()"
+              >
+                اختر الملف
+              </button>
             </div>
             <div
               id="attendanceInfo"
@@ -52,42 +157,9 @@
             ></div>
           </div>
 
+          <!-- Quick Stats -->
           <div class="card">
-            <div class="card-title">⚙️ إعدادات التقرير</div>
-            <div class="form-group">
-              <label for="shiftStart">بداية الدوام</label>
-              <input type="time" id="shiftStart" value="08:00" />
-            </div>
-            <div class="form-group">
-              <label for="workHours">ساعات العمل المتوقعة</label>
-              <input type="number" id="workHours" min="1" value="8" />
-            </div>
-            <div class="form-group">
-              <label for="statusFilter">فلترة حسب الحالة</label>
-              <select id="statusFilter">
-                <option value="all">جميع الحالات</option>
-                <option value="present">حاضر</option>
-                <option value="absent">غائب</option>
-                <option value="late">متأخر</option>
-              </select>
-            </div>
-            <button onclick="applyFilters()">تطبيق الفلترة</button>
-          </div>
-
-          <div class="card">
-            <div class="card-title">🔍 البحث</div>
-            <div class="search-box">
-              <input
-                type="text"
-                id="searchInput"
-                placeholder="ابحث بالاسم أو الرقم..."
-              />
-              <span class="search-icon">🔍</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">📈 إحصائيات سريعة</div>
+            <div class="card-title">إحصائيات سريعة</div>
             <div class="stats">
               <div class="stat-card">
                 <div class="stat-title">إجمالي الموظفين</div>
@@ -99,40 +171,78 @@
               </div>
             </div>
           </div>
+          <!-- Filters -->
+          <div class="card">
+            <div class="card-title">البحث والفلترة</div>
+            <!-- ✅ فلتر الشهر -->
+            <select
+              id="monthFilter"
+              style="
+                width: 100%;
+                padding: 10px;
+                margin-bottom: 10px;
+                border-radius: 5px;
+                border: 1px solid #ddd;
+              "
+            >
+              <option value="all">جميع الأشهر</option>
+              <!-- سيتم ملؤها ديناميكياً -->
+            </select>
+            <input
+              type="text"
+              id="searchInput"
+              placeholder="ابحث بالاسم أو الرقم..."
+              style="
+                width: 100%;
+                padding: 10px;
+                margin-bottom: 10px;
+                border-radius: 5px;
+                border: 1px solid #ddd;
+              "
+            />
+
+            <select
+              id="statusFilter"
+              style="
+                width: 100%;
+                padding: 10px;
+                border-radius: 5px;
+                border: 1px solid #ddd;
+              "
+            >
+              <option value="all">جميع الحالات</option>
+              <option value="present">حاضر</option>
+              <option value="absent">غائب</option>
+              <option value="late">متأخر</option>
+            </select>
+
+            <button id="applyFilters" style="width: 100%; margin-top: 10px">
+              تطبيق الفلترة
+            </button>
+          </div>
         </div>
 
         <div class="content">
+          <!-- Actions -->
           <div class="actions">
-            <button onclick="generateReport()" class="success">
-              🔄 توليد التقرير
+            <button id="generateReport" class="success">
+              توليد التقرير (محلي)
             </button>
-            <button
-              onclick="downloadExcel()"
-              id="downloadExcel"
-              class="secondary"
-              disabled
-            >
-              📥 تحميل Excel شامل
+            <button id="loadFromBackend" class="secondary">
+              📥 جلب من الخادم
             </button>
-            <button
-              onclick="downloadEmployeeExcel()"
-              id="downloadEmployeeExcel"
-              class="secondary"
-              disabled
-            >
-              👤 Excel لكل موظف
+            <button id="downloadExcel" class="secondary" disabled>
+              تحميل Excel شامل
             </button>
-            <button
-              onclick="downloadIndividualExcels()"
-              id="downloadIndividual"
-              class="secondary"
-              disabled
-            >
-              📂 ملفات منفصلة لكل موظف
+            <button id="downloadEmployeeExcel" class="secondary" disabled>
+              ملف لكل موظف
             </button>
-            <button onclick="resetData()" class="danger">🔄 إعادة تعيين</button>
+            <button id="downloadIndividual" class="secondary" disabled>
+              ملفات منفصلة
+            </button>
+            <button id="resetData" class="danger">إعادة تعيين</button>
           </div>
-
+          <!-- Table -->
           <div class="table-container">
             <table>
               <thead>
@@ -165,6 +275,6 @@
       </div>
     </div>
 
-    <script src="./JS/main.js"></script>
+    <script type="module" src="./JS/main.js"></script>
   </body>
 </html>

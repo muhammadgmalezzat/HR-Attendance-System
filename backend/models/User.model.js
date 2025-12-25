@@ -112,10 +112,17 @@ userSchema.methods.getShiftForDate = function (date) {
     const dayShift = this.shiftSchedule[dayOfWeek];
 
     if (dayShift && dayShift.from && dayShift.to) {
-      return dayShift;
+      // ✅ تأكد من إرجاع nextDay بشكل صحيح
+      return {
+        from: dayShift.from,
+        to: dayShift.to,
+        nextDay: dayShift.nextDay || dayShift.to < dayShift.from,
+      };
     }
+
+    // Day off
     if (!dayShift || !dayShift.from || !dayShift.to) {
-      return null; // Day off
+      return null;
     }
   }
 
