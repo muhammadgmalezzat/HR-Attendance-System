@@ -4,57 +4,8 @@ import moment from "moment-timezone";
  * Parse attendance data from frontend
  * Expected format: Array of objects with user_id, timestamp
  * OR array of strings (raw lines from .dat file)
- */
-export const parseAttendanceData = (data) => {
-  const timezone = process.env.TIMEZONE || "Asia/Riyadh";
-  const records = [];
-  const errors = [];
+//  */
 
-  try {
-    // If data is already parsed objects
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object") {
-      data.forEach((record, index) => {
-        try {
-          const parsed = parseAttendanceRecord(record, timezone);
-          if (parsed) {
-            records.push(parsed);
-          }
-        } catch (err) {
-          errors.push({
-            line: index + 1,
-            data: record,
-            error: err.message,
-          });
-        }
-      });
-    }
-    // If data is array of strings (raw lines)
-    else if (
-      Array.isArray(data) &&
-      data.length > 0 &&
-      typeof data[0] === "string"
-    ) {
-      data.forEach((line, index) => {
-        try {
-          const parsed = parseAttendanceLine(line, timezone);
-          if (parsed) {
-            records.push(parsed);
-          }
-        } catch (err) {
-          errors.push({
-            line: index + 1,
-            data: line,
-            error: err.message,
-          });
-        }
-      });
-    }
-  } catch (error) {
-    throw new Error(`Failed to parse attendance data: ${error.message}`);
-  }
-
-  return { records, errors };
-};
 
 /**
  * Parse single attendance record object
@@ -129,6 +80,67 @@ export const parseAttendanceLine = (line, timezone) => {
 };
 
 /**
+ * Parse attendance data from frontend
+ */
+export const parseAttendanceData = (data) => {
+  const timezone = process.env.TIMEZONE || "Asia/Riyadh";
+  const records = [];
+  const errors = [];
+
+  try {
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error("Data must be a non-empty array");
+    }
+
+    data.forEach((record, index) => {
+      try {
+        // التحقق من الحقول المطلوبة
+        if (!record.user_id || !record.timestamp) {
+          throw new Error("Missing required fields: user_id or timestamp");
+        }
+
+        const user_id = String(record.user_id).trim();
+
+        // إنشاء timestamp من التاريخ والوقت
+        let timestamp;
+        if (record.timestamp.includes(" ")) {
+          // Format: "2025-11-01 00:01:28"
+          timestamp = moment.tz(
+            record.timestamp,
+            "YYYY-MM-DD HH:mm:ss",
+            timezone
+          );
+        } else {
+          timestamp = moment.tz(record.timestamp, timezone);
+        }
+
+        if (!timestamp.isValid()) {
+          throw new Error(`Invalid timestamp: ${record.timestamp}`);
+        }
+
+        records.push({
+          user_id,
+          timestamp: timestamp.toDate(),
+          date: timestamp.format("YYYY-MM-DD"),
+          time: timestamp.format("HH:mm:ss"),
+          type: record.type || "unknown",
+        });
+      } catch (err) {
+        errors.push({
+          line: index + 1,
+          data: record,
+          error: err.message,
+        });
+      }
+    });
+  } catch (error) {
+    throw new Error(`Failed to parse attendance data: ${error.message}`);
+  }
+
+  console.log(`✅ Parsed ${records.length} records, ${errors.length} errors`);
+  return { records, errors };
+};
+/**
  * Parse users data from frontend
  * Expected: Array of user objects
  */
@@ -160,16 +172,19 @@ export const parseUsersData = (data) => {
  * Parse single user record
  */
 export const parseUserRecord = (user) => {
+  // ✅ التحقق من الحقول المطلوبة
   if (!user.user_id || !user.name) {
     throw new Error("Missing required fields: user_id or name");
   }
 
   const parsed = {
     user_id: String(user.user_id).trim(),
-    name: user.name.trim(),
-    job: user.job ? user.job.trim() : "",
-    gender: user.gender ? user.gender.toLowerCase() : "male",
+    name: String(user.name).trim(), // ✅ استخدم name مباشرة
+    job: user.job ? String(user.job).trim() : "",
+    gender: user.gender ? String(user.gender).toLowerCase() : "male",
   };
+
+  console.log("🚀 ~ parseUserRecord ~ parsed:", parsed);
 
   // Handle shift configuration
   if (user.shiftSchedule && typeof user.shiftSchedule === "object") {
